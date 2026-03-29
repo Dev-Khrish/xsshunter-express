@@ -50,12 +50,15 @@ const SCREENSHOT_FILENAME_REGEX = new RegExp(/^[0-9A-F]{8}-[0-9A-F]{4}-4[0-9A-F]
 async function get_app_server() {
 	const app = express();
 
-	// I have a question for Express:
-	// https://youtu.be/ZtjFsQBuJWw?t=4
+	// Trust Render's reverse proxy so secure cookies work over HTTPS
+	app.set('trust proxy', 1);
+	app.use(function(req, res, next) {
+		req.connection.proxySecure = true;
+		next();
+	});
+
 	app.set('case sensitive routing', true);
 
-    // Making 100% sure this works like it should
-    // https://youtu.be/aCbfMkh940Q?t=6
     app.use(async function(req, res, next) {
 		if(req.path.toLowerCase() === req.path) {
 			next();
@@ -71,13 +74,11 @@ async function get_app_server() {
 
 	app.use(bodyParser.json());
 
-    // Set security-related headers on requests
     app.use(async function(req, res, next) {
     	set_secure_headers(req, res);
     	next();
     });
 
-    // Handler for HTML pages collected by payloads
     const CollectedPagesCallbackSchema = {
     	"type": "object",
     	"properties": {
@@ -103,13 +104,11 @@ async function get_app_server() {
 			html: req.body.html,
 		});
 
-		// Send the response immediately, they don't need to wait for us to store everything.
 		res.status(200).json({
 			"status": "success"
 		}).end();
 	});
 
-    // Handler for XSS payload data to be received
     const JSCallbackSchema = {
     	"type": "object",
     	"properties": {
@@ -171,25 +170,18 @@ async function get_app_server() {
 		res.set("Access-Control-Allow-Headers", "Content-Type, X-Requested-With");
 		res.set("Access-Control-Max-Age", "86400");
 
-		// Send the response immediately, they don't need to wait for us to store everything.
 		res.status(200).json({
 			"status": "success"
 		}).end();
 
-    	// Multer stores the image in the /tmp/ dir. We use this source image
-    	// to write a gzipped version in the user-provided dir and then delete
-    	// the original uncompressed image.
     	const payload_fire_image_id = uuid.v4();
     	const payload_fire_image_filename = `${SCREENSHOTS_DIR}/${payload_fire_image_id}.png.gz`;
     	const multer_temp_image_path = req.file.path;
 
-    	// We also gzip the image so we don't waste disk space
     	const gzip = zlib.createGzip();
     	const output_gzip_stream = fs.createWriteStream(payload_fire_image_filename);
     	const input_read_stream = fs.createReadStream(multer_temp_image_path);
 
-    	// When the "finish" event is called we delete the original
-    	// uncompressed image file left behind by multer.
     	input_read_stream.pipe(gzip).pipe(output_gzip_stream).on('finish', async (error) => {
     		if(error) {
     			console.error(`An error occurred while writing the XSS payload screenshot (gzipped) to disk:`);
@@ -219,7 +211,6 @@ async function get_app_server() {
             correlated_request: 'No correlated request found for this injection.',
 		}
 
-        // Check for correlated request
         const correlated_request_rec = await InjectionRequests.findOne({
             where: {
                 injection_key: req.body.injection_key
@@ -230,10 +221,8 @@ async function get_app_server() {
             payload_fire_data.correlated_request = correlated_request_rec.request;
         }
 
-		// Store payload fire results in the database
 		const new_payload_fire_result = await PayloadFireResults.create(payload_fire_data);
 
-		// Send out notification via configured notification channel
 		if(process.env.SMTP_EMAIL_NOTIFICATIONS_ENABLED === "true") {
 			payload_fire_data.screenshot_url = `https://${process.env.HOSTNAME}/screenshots/${payload_fire_data.screenshot_id}.png`;
 			await notification.send_email_notification(payload_fire_data);
@@ -243,7 +232,6 @@ async function get_app_server() {
 	app.get('/screenshots/:screenshotFilename', async (req, res) => {
 		const screenshot_filename = req.params.screenshotFilename;
 
-		// Come correct or don't come at all.
 		if(!SCREENSHOT_FILENAME_REGEX.test(screenshot_filename)) {
 			return res.sendStatus(404);
 		}
@@ -256,10 +244,7 @@ async function get_app_server() {
 			return res.sendStatus(404);
 		}
 
-		// Return the gzipped image file with the appropriate
-		// Content-Encoding header, should be widely supported.
 		res.sendFile(gz_image_path, {
-			// Why leak anything you don't have to?
 			lastModified: false,
 			acceptRanges: false,
 			cacheControl: true,
@@ -270,8 +255,6 @@ async function get_app_server() {
 		})
 	});
 
-    // Set up /health handler so the user can
-    // do uptime checks and appropriate alerting.
     app.get('/health', async (req, res) => {
     	try {
     		await sequelize.authenticate();
@@ -325,18 +308,9 @@ async function get_app_server() {
         ));
     };
 
-    // Handler that returns the XSS payload at the base path
     app.get('/', payload_handler);
 
-    /*
-		Enabling the web control panel is 100% optional. This can be
-		enabled with the "CONTROL_PANEL_ENABLED" environment variable.
-
-		However, if the user just wants alerts on payload firing then
-		they can disable the web control panel to reduce attack surface.
-	*/
 	if(process.env.CONTROL_PANEL_ENABLED === 'true') {
-        // Enable API and static asset serving.
         await api.set_up_api_server(app);
 	} else {
         console.log(`[INFO] Control panel NOT enabled. Not serving API or GUI server, only acting as a notification server...`);
