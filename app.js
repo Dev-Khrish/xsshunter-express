@@ -175,24 +175,21 @@ async function get_app_server() {
 		}).end();
 
     	const payload_fire_image_id = uuid.v4();
-    	const payload_fire_image_filename = `${SCREENSHOTS_DIR}/${payload_fire_image_id}.png.gz`;
-    	const multer_temp_image_path = req.file.path;
 
-    	const gzip = zlib.createGzip();
-    	const output_gzip_stream = fs.createWriteStream(payload_fire_image_filename);
-    	const input_read_stream = fs.createReadStream(multer_temp_image_path);
-
-    	input_read_stream.pipe(gzip).pipe(output_gzip_stream).on('finish', async (error) => {
-    		if(error) {
-    			console.error(`An error occurred while writing the XSS payload screenshot (gzipped) to disk:`);
-    			console.error(error);
-    		}
-
-    		console.log(`Gzip stream complete, deleting multer temp file: ${multer_temp_image_path}`);
-
-    		await asyncfs.unlink(multer_temp_image_path);
-    	});
-
+		if (req.file) {
+		    const payload_fire_image_filename = `${SCREENSHOTS_DIR}/${payload_fire_image_id}.png.gz`;
+		    const multer_temp_image_path = req.file.path;
+		    const gzip = zlib.createGzip();
+		    const output_gzip_stream = fs.createWriteStream(payload_fire_image_filename);
+		    const input_read_stream = fs.createReadStream(multer_temp_image_path);
+		    input_read_stream.pipe(gzip).pipe(output_gzip_stream).on('finish', async (error) => {
+		        if(error) {
+		            console.error(`An error occurred while writing screenshot:`, error);
+		        }
+		        console.log(`Gzip stream complete, deleting multer temp file: ${multer_temp_image_path}`);
+		        await asyncfs.unlink(multer_temp_image_path);
+		    });
+		}
     	const payload_fire_id = uuid.v4();
 		var payload_fire_data = {
 			id: payload_fire_id,
